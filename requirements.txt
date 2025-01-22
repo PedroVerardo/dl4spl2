@@ -1,0 +1,6 @@
+torch==2.5.1
+lightning==2.5.0
+scikit-learn==1.6.1
+ray==2.40.0
+matplotlib==3.10.0
+optuna==4.2.0
