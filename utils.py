@@ -1,4 +1,5 @@
 import lightning as L
+import torch
 from torch import nn
 
 class LightningModel(L.LightningModule):
