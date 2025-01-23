@@ -24,8 +24,11 @@ if __name__ == '__main__':
     data = pd.read_parquet('data.parquet')
     selected_data = data[top_decision_tree]
 
+<<<<<<< HEAD
     LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
 
+=======
+>>>>>>> 8964b3efe39f9b40f6aeb09010c011e07fe9fd3a
     model = LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
 
     train_size = int(0.8 * len(selected_data))
@@ -39,7 +42,11 @@ if __name__ == '__main__':
         max_epochs=10,
         accelerator='auto',
         devices=1,
+<<<<<<< HEAD
         enable_progress_bar=True
+=======
+        enable_progress_bar=True  
+>>>>>>> 8964b3efe39f9b40f6aeb09010c011e07fe9fd3a
     )
 
     checkpoint_path = "checkpoints/best-checkpoint.ckpt"
