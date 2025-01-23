@@ -24,8 +24,6 @@ if __name__ == '__main__':
     data = pd.read_parquet('data.parquet')
     selected_data = data[top_decision_tree]
 
-    LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
-
     model = LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
 
     train_size = int(0.8 * len(selected_data))
