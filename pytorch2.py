@@ -48,6 +48,12 @@ X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
 y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32)
 y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32)
 
+# Enviar objetos grandes para o Ray Object Store
+X_train_ref = put(X_train_tensor)
+X_test_ref = put(X_test_tensor)
+y_train_ref = put(y_train_tensor)
+y_test_ref = put(y_test_tensor)
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
@@ -64,8 +70,8 @@ class CustomDataset(torch.utils.data.Dataset):
         return self.features[idx], self.labels[idx]
 
 # Criar DataLoaders
-train_dataset = CustomDataset(X_train_tensor, y_train_tensor)
-test_dataset = CustomDataset(X_test_tensor, y_test_tensor)
+train_dataset = CustomDataset(get(X_train_ref), get(y_train_ref))
+test_dataset = CustomDataset(get(X_test_ref), get(y_test_ref))
 
 num_workers = min(8, multiprocessing.cpu_count())  # Detectar automaticamente o número de núcleos disponíveis, limitado a 8
 
@@ -172,25 +178,36 @@ def train_model_tune(config, num_features, train_dataloader, val_dataloader, max
     trainer.fit(model, train_dataloader, val_dataloader)
 
 # Função para otimizar hiperparâmetros
-def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_samples=10):
+def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref, num_samples=10):
+    # Define the search space
     config = {
         "optimizer": tune.choice(["Adam", "AdamW"]),
-        "loss_function": tune.choice(["MAE", "MSE", "SmoothL1Loss"]),
+        "loss_function": tune.choice(["MAE", "MSE","SmoothL1Loss"]),
         "activation": tune.choice(["ReLU", "PReLU", "ELU"]),
-        "max_t": tune.grid_search([20, 30, 40]),  
-        "grace_period": tune.grid_search([5, 10, 15])  
     }
     
-    search_algo = OptunaSearch(metric="loss", mode="min")
+    search_algo = OptunaSearch(
+        metric="loss",
+        mode="min"
+    )
+    
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        max_t=max(config['max_t']),
-        grace_period=min(config['grace_period']),
+        max_t=30,
+        grace_period=10,
         reduction_factor=2
     )
     
     tuner = tune.Tuner(
-        partial(train_model_tune, num_features=num_features, train_dataloader=train_dataloader, val_dataloader=val_dataloader),
+        tune.with_resources(
+            partial(
+                train_model_tune,
+                num_features=num_features,
+                train_dataloader=get(train_dataloader_ref),
+                val_dataloader=get(val_dataloader_ref)
+            ),
+            resources={"cpu": 16, "gpu": 1}  # Ajuste com base no hardware disponível
+        ),
         tune_config=tune.TuneConfig(
             metric="loss",
             mode="min",
@@ -202,11 +219,13 @@ def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_sam
     )
     
     results = tuner.fit()
+    
+    # Get best trial
     best_result = results.get_best_result(metric="loss", mode="min")
     best_trial_config = best_result.config
     best_trial_loss = best_result.metrics['loss']
-    print("Melhor configuração encontrada:", best_trial_config)
-    print("Melhor perda na validação:", best_trial_loss)
+    print(f"Best trial config: {best_trial_config}")
+    print(f"Best trial final validation loss: {best_trial_loss}")
     
     return best_trial_config
 
@@ -214,7 +233,7 @@ def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_sam
 if __name__ == "__main__":
     best_config = tune_hyperparameters(
         num_features=X.shape[1],
-        train_dataloader=train_dataloader,
-        val_dataloader=test_dataloader,
+        train_dataloader_ref=put(train_dataloader),
+        val_dataloader_ref=put(test_dataloader),
         num_samples=18
     )
