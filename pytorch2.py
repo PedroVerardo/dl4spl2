@@ -159,7 +159,9 @@ def train_model_tune(config, num_features, train_dataloader, val_dataloader, max
         filename="epoch-{epoch:02d}-val_loss-{val_loss:.2f}",
         save_top_k=5,  # Manter apenas os 5 melhores checkpoints para economizar espaço
         verbose=True,
-        every_n_epochs=1
+        every_n_epochs=1,
+        monitor="val_loss",  # Adiciona a métrica para rastreamento
+        mode="min"
     )
 
     callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end"), checkpoint_callback]
