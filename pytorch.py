@@ -177,15 +177,15 @@ def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_sam
         "optimizer": tune.choice(["Adam", "AdamW"]),
         "loss_function": tune.choice(["MAE", "MSE", "SmoothL1Loss"]),
         "activation": tune.choice(["ReLU", "PReLU", "ELU"]),
-        "max_t": tune.choice([20, 30, 40]),  # Tornar max_t configurável
-        "grace_period": tune.choice([5, 10, 15])  # Tornar grace_period configurável
+        "max_t": tune.grid_search([20, 30, 40]),  
+        "grace_period": tune.grid_search([5, 10, 15])  
     }
     
     search_algo = OptunaSearch(metric="loss", mode="min")
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        max_t=config['max_t'],
-        grace_period=config['grace_period'],
+        max_t=max(config['max_t']),
+        grace_period=min(config['grace_period']),
         reduction_factor=2
     )
     
