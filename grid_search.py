@@ -1,57 +1,66 @@
 import pandas as pd
+import torch
+import gc
 from utils import LightningModel
 import lightning as L
 import os
-import torch
+
+class LargeDataset(torch.utils.data.Dataset):
+    def __init__(self, data):
+        self.data = data
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        return torch.tensor(self.data.iloc[idx, :-1].values, dtype=torch.float32), \
+               torch.tensor(self.data.iloc[idx, -1], dtype=torch.float32)
 
 def select_top_features(df, top_percentage=0.7):
     df_sorted = df.sort_values(by='importance', ascending=False)
     top_n = int(len(df_sorted) * top_percentage)
-    top_features = df_sorted.head(top_n)['features'].tolist()
-    return df[top_features]
+    return df_sorted.head(top_n)['features'].tolist()
 
 if __name__ == '__main__':
-    decision_tree = pd.read_csv('feature_importance_DT.csv')
-    random_forest = pd.read_csv('feature_importance_RF.csv')
-    gradient_boosting = pd.read_csv('feature_importance_GB.csv')
+    decision_tree = pd.read_csv('feature_importances_DecisionTree.csv')
+    random_forest = pd.read_csv('feature_importances_RandomForest.csv')
+    gradient_boosting = pd.read_csv('feature_importances_GradientBoosting.csv')
+    xgboost = pd.read_csv('feature_importances_XGBoost.csv')
 
-    top_percentage=0.7
-
+    top_percentage = 0.7
     top_decision_tree = select_top_features(decision_tree, top_percentage)
     top_random_forest = select_top_features(random_forest, top_percentage)
     top_gradient_boosting = select_top_features(gradient_boosting, top_percentage)
+    top_xgboost = select_top_features(xgboost, top_percentage)
 
-    data = pd.read_parquet('data.parquet')
-    selected_data = data[top_decision_tree]
+    data = pd.read_parquet('data.parquet', columns=top_decision_tree)
+    data = data.astype('float32')
+    gc.collect()
 
-<<<<<<< HEAD
-    LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
+    model = LightningModel(num_features=len(data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
 
-=======
->>>>>>> 8964b3efe39f9b40f6aeb09010c011e07fe9fd3a
-    model = LightningModel(num_features=len(selected_data.columns), activation="PReLU", optimizer_name="Adam", loss_name="MSELoss")
+    train_size = int(0.8 * len(data))
+    train_data = data.iloc[:train_size]
+    test_data = data.iloc[train_size:]
 
-    train_size = int(0.8 * len(selected_data))
-    test_size = len(selected_data) - train_size
-    train_dataset, test_dataset = torch.utils.data.random_split(selected_data, [train_size, test_size])
+    del data
+    gc.collect()
 
-    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True)
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False)
+    train_dataset = LargeDataset(train_data)
+    test_dataset = LargeDataset(test_data)
+
+    del train_data, test_data
+    gc.collect()
+
+    train_loader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=4)
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=4)
 
     trainer = L.Trainer(
         max_epochs=10,
         accelerator='auto',
         devices=1,
-<<<<<<< HEAD
         enable_progress_bar=True
-=======
-        enable_progress_bar=True  
->>>>>>> 8964b3efe39f9b40f6aeb09010c011e07fe9fd3a
     )
 
-    checkpoint_path = "checkpoints/best-checkpoint.ckpt"
-    if os.path.exists(checkpoint_path):
-        trainer.fit(model, train_loader, test_loader, ckpt_path=checkpoint_path)
-    else:
-        trainer.fit(model, train_loader, test_loader)
+    trainer.fit(model, train_loader, test_loader)
 
