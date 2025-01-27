@@ -24,6 +24,8 @@ import os
 from sklearn.model_selection import train_test_split
 
 import logging
+import sys
+import multiprocessing
 
 logging.basicConfig(level=logging.INFO, filename="training_logs.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -65,8 +67,10 @@ class CustomDataset(torch.utils.data.Dataset):
 train_dataset = CustomDataset(X_train_tensor, y_train_tensor)
 test_dataset = CustomDataset(X_test_tensor, y_test_tensor)
 
-train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=2)
-test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=2)
+num_workers = min(8, multiprocessing.cpu_count())  # Detectar automaticamente o número de núcleos disponíveis, limitado a 8
+
+train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=num_workers)
+test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=num_workers)
 
 # Definir o modelo
 class LightningModel(L.LightningModule):
@@ -147,19 +151,22 @@ def train_model_tune(config, num_features, train_dataloader, val_dataloader, max
     checkpoint_callback = ModelCheckpoint(
         dirpath="checkpoints",
         filename="epoch-{epoch:02d}-val_loss-{val_loss:.2f}",
-        save_top_k=-1,  # Salvar todos os checkpoints
+        save_top_k=5,  # Manter apenas os 5 melhores checkpoints para economizar espaço
         verbose=True,
         every_n_epochs=1
     )
 
     callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end"), checkpoint_callback]
-    
+
+    # Detectar ambiente de execução
+    is_headless = not sys.stdout.isatty()
+
     trainer = L.Trainer(
         max_epochs=max_epochs,
         accelerator='auto',
         devices='auto',  # Seleciona automaticamente os recursos disponíveis
         callbacks=callbacks,
-        enable_progress_bar=True 
+        enable_progress_bar=not is_headless  # Desativar barra de progresso em ambientes headless
     )
     
     trainer.fit(model, train_dataloader, val_dataloader)
@@ -170,21 +177,20 @@ def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_sam
         "optimizer": tune.choice(["Adam", "AdamW"]),
         "loss_function": tune.choice(["MAE", "MSE", "SmoothL1Loss"]),
         "activation": tune.choice(["ReLU", "PReLU", "ELU"]),
+        "max_t": tune.choice([20, 30, 40]),  # Tornar max_t configurável
+        "grace_period": tune.choice([5, 10, 15])  # Tornar grace_period configurável
     }
     
     search_algo = OptunaSearch(metric="loss", mode="min")
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        max_t=30,
-        grace_period=10,
+        max_t=config['max_t'],
+        grace_period=config['grace_period'],
         reduction_factor=2
     )
     
     tuner = tune.Tuner(
-        tune.with_resources(
-            partial(train_model_tune, num_features=num_features, train_dataloader=train_dataloader, val_dataloader=val_dataloader),
-            resources="auto"  # Seleciona automaticamente os recursos disponíveis
-        ),
+        partial(train_model_tune, num_features=num_features, train_dataloader=train_dataloader, val_dataloader=val_dataloader),
         tune_config=tune.TuneConfig(
             metric="loss",
             mode="min",
