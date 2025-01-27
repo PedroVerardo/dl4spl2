@@ -52,19 +52,7 @@ logger = logging.getLogger(__name__)
 
 
 df = pd.read_parquet('data.parquet')
-df.head(4)
 
-
-# In[ ]:
-
-
-df.info()
-
-
-# # Float point transformation
-# 
-# + Pass the data to float
-# + Get used on pytorch models
 
 # In[ ]:
 
@@ -82,14 +70,11 @@ df = df.astype('float32')
 
 
 df = df.sample(1500) # 1+ comente ou remova essa celula para rodar com o dataset completo, o tempo de execução será extenso.
-df
-
 
 # In[7]:
 
 
 num_features = df.shape[1]
-num_features
 
 
 # # sample and split the dataset
@@ -105,12 +90,6 @@ target_column = 'perf'
 
 y = df[target_column]
 X = df.drop(columns=[target_column])
-
-
-# In[10]:
-
-
-print("X Shape: ",X.shape,"\n Y Shape: ", y.shape)
 
 
 # In[11]:
@@ -358,7 +337,8 @@ def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref,
 
 
 num_features = X.shape[1]
-num_features
+
+print(num_features)
 
 
 # In[ ]:
