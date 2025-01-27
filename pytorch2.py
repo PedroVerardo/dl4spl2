@@ -1,70 +1,57 @@
 #!/usr/bin/env python
 # coding: utf-8
+
+# Importar bibliotecas
 import torch
 from torch import nn
 import lightning as L
 from pytorch_lightning import Trainer
 from pytorch_lightning.callbacks import ModelCheckpoint
+
 from ray import train, tune, put, get, init
 from ray.tune.search.optuna import OptunaSearch
 from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
+
 import matplotlib.pyplot as plt
 import seaborn as sns
+
 import mlflow
 import numpy as np
 import pandas as pd
 import os
 from sklearn.model_selection import train_test_split
-from sklearn.model_selection import cross_val_score, KFold
+
 import logging
+import sys
+import multiprocessing
 
-
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, filename="training_logs.log", filemode="a", format="%(asctime)s - %(levelname)s - %(message)s")
 logger = logging.getLogger(__name__)
 
-
+# Carregar e preprocessar o dataset
 df = pd.read_parquet('data.parquet')
 df = df.astype('float32')
-df = df.sample(1500) # 1+ comente ou remova essa celula para rodar com o dataset completo, o tempo de execução será extenso.
+df = df.sample(1500)  # Substituir para o dataset completo, se necessário
 
-
-num_features = df.shape[1]
-num_features
+# Separar features e target
 target_column = 'perf'
-
-
 y = df[target_column]
 X = df.drop(columns=[target_column])
+
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-
-X_train_np = X_train.to_numpy(dtype=np.float32)
-X_test_np = X_test.to_numpy(dtype=np.float32)
-y_train_np = y_train.to_numpy(dtype=np.float32)
-y_test_np = y_test.to_numpy(dtype=np.float32)
-
+# Converter para tensores
+X_train_tensor = torch.tensor(X_train.values, dtype=torch.float32)
+X_test_tensor = torch.tensor(X_test.values, dtype=torch.float32)
+y_train_tensor = torch.tensor(y_train.values, dtype=torch.float32)
+y_test_tensor = torch.tensor(y_test.values, dtype=torch.float32)
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(device)
 
-
-X_train_tensor = torch.tensor(X_train, dtype=torch.float32)
-X_test_tensor = torch.tensor(X_test, dtype=torch.float32)
-y_train_tensor = torch.tensor(y_train, dtype=torch.float32)
-y_test_tensor = torch.tensor(y_test, dtype=torch.float32)
-
-
-init()
-
-# Put tensors into the Ray object store
-X_train_ref = put(X_train_tensor)
-y_train_ref = put(y_train_tensor)
-X_test_ref = put(X_test_tensor)
-y_test_ref = put(y_test_tensor)
-
-
+# Dataset personalizado
 class CustomDataset(torch.utils.data.Dataset):
     def __init__(self, features, labels):
         self.features = features
@@ -76,20 +63,18 @@ class CustomDataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         return self.features[idx], self.labels[idx]
 
-# Create datasets using references
+# Criar DataLoaders
 train_dataset = CustomDataset(X_train_tensor, y_train_tensor)
 test_dataset = CustomDataset(X_test_tensor, y_test_tensor)
 
-# DataLoaders remain the same
-train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=23)
-test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=23)
+num_workers = min(8, multiprocessing.cpu_count())  # Detectar automaticamente o número de núcleos disponíveis, limitado a 8
 
+train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=num_workers)
+test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=num_workers)
 
-number_of_features = X_train.shape[1]
-
-
+# Definir o modelo
 class LightningModel(L.LightningModule):
-    def __init__(self, num_features, activation="ReLU", optimizer_name="Adam", loss_name="MSELoss"):
+    def __init__(self, num_features, activation="ReLU", optimizer_name="Adam", loss_name="MSE"):
         super().__init__()
         self.num_features = num_features
         self.activation = activation
@@ -102,7 +87,6 @@ class LightningModel(L.LightningModule):
 
     def training_step(self, batch, batch_idx):
         x, y = batch
-        x = x.view(x.size(0), num_features)
         z = self(x)
         loss = self.get_loss_function()(z, y.unsqueeze(1))
         self.log('train_loss', loss)
@@ -110,7 +94,6 @@ class LightningModel(L.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         x, y = batch
-        x = x.view(x.size(0), num_features)
         z = self(x)
         loss = self.get_loss_function()(z, y.unsqueeze(1))
         self.log('val_loss', loss)
@@ -155,9 +138,8 @@ class LightningModel(L.LightningModule):
             nn.Linear(hidden_size2, 1)
         )
 
-
-def train_model_tune(config, num_features, train_dataloader_ref, val_dataloader_ref, max_epochs=100):
-
+# Função para treinar o modelo
+def train_model_tune(config, num_features, train_dataloader, val_dataloader, max_epochs=100):
     model = LightningModel(
         num_features=num_features,
         activation=config["activation"],
@@ -166,49 +148,49 @@ def train_model_tune(config, num_features, train_dataloader_ref, val_dataloader_
     )
 
     metrics = {"loss": "val_loss"}
-    callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end")]
-    
+    checkpoint_callback = ModelCheckpoint(
+        dirpath="checkpoints",
+        filename="epoch-{epoch:02d}-val_loss-{val_loss:.2f}",
+        save_top_k=5,  # Manter apenas os 5 melhores checkpoints para economizar espaço
+        verbose=True,
+        every_n_epochs=1
+    )
+
+    callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end"), checkpoint_callback]
+
+    # Detectar ambiente de execução
+    is_headless = not sys.stdout.isatty()
+
     trainer = L.Trainer(
         max_epochs=max_epochs,
         accelerator='auto',
-        devices=1,
+        devices='auto',  # Seleciona automaticamente os recursos disponíveis
         callbacks=callbacks,
-        enable_progress_bar=False 
+        enable_progress_bar=not is_headless  # Desativar barra de progresso em ambientes headless
     )
     
-    trainer.fit(model, train_dataloader_ref, val_dataloader_ref)
+    trainer.fit(model, train_dataloader, val_dataloader)
 
-
-def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref, num_samples=10):
-    # Define the search space
+# Função para otimizar hiperparâmetros
+def tune_hyperparameters(num_features, train_dataloader, val_dataloader, num_samples=10):
     config = {
         "optimizer": tune.choice(["Adam", "AdamW"]),
-        "loss_function": tune.choice(["MAE", "MSE","SmoothL1Loss"]),
+        "loss_function": tune.choice(["MAE", "MSE", "SmoothL1Loss"]),
         "activation": tune.choice(["ReLU", "PReLU", "ELU"]),
+        "max_t": tune.grid_search([20, 30, 40]),  
+        "grace_period": tune.grid_search([5, 10, 15])  
     }
     
-    search_algo = OptunaSearch(
-        metric="loss",
-        mode="min"
-    )
-    
+    search_algo = OptunaSearch(metric="loss", mode="min")
     scheduler = ASHAScheduler(
         time_attr='training_iteration',
-        max_t=30,
-        grace_period=10,
+        max_t=max(config['max_t']),
+        grace_period=min(config['grace_period']),
         reduction_factor=2
     )
     
     tuner = tune.Tuner(
-        tune.with_resources(
-            partial(
-                train_model_tune,
-                num_features=num_features,
-                train_dataloader_ref=train_dataloader_ref,
-                val_dataloader_ref=val_dataloader_ref
-            ),
-            resources={"cpu": 16, "gpu": 1}  # Adjust based on your hardware
-        ),
+        partial(train_model_tune, num_features=num_features, train_dataloader=train_dataloader, val_dataloader=val_dataloader),
         tune_config=tune.TuneConfig(
             metric="loss",
             mode="min",
@@ -220,25 +202,19 @@ def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref,
     )
     
     results = tuner.fit()
-    
-    # Get best trial
     best_result = results.get_best_result(metric="loss", mode="min")
     best_trial_config = best_result.config
     best_trial_loss = best_result.metrics['loss']
-    print(f"Best trial config: {best_trial_config}")
-    print(f"Best trial final validation loss: {best_trial_loss}")
+    print("Melhor configuração encontrada:", best_trial_config)
+    print("Melhor perda na validação:", best_trial_loss)
     
     return best_trial_config
 
-
-num_features = X.shape[1]
-num_features
-
-
-best_config = tune_hyperparameters(
-        num_features=num_features,
-        train_dataloader_ref=train_dataloader,
-        val_dataloader_ref=test_dataloader,
+# Executar a otimização de hiperparâmetros
+if __name__ == "__main__":
+    best_config = tune_hyperparameters(
+        num_features=X.shape[1],
+        train_dataloader=train_dataloader,
+        val_dataloader=test_dataloader,
         num_samples=18
     )
-    
