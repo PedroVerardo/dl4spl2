@@ -4,9 +4,9 @@
 # Importar bibliotecas
 import torch
 from torch import nn
-import lightning as L
-from pytorch_lightning import Trainer
-from pytorch_lightning.callbacks import ModelCheckpoint
+import lightning.pytorch as L
+from lightning.pytorch import Trainer
+from lightning.pytorch.callbacks import ModelCheckpoint
 
 from ray import train, tune, put, get, init
 from ray.tune.search.optuna import OptunaSearch
@@ -73,10 +73,10 @@ class CustomDataset(torch.utils.data.Dataset):
 train_dataset = CustomDataset(get(X_train_ref), get(y_train_ref))
 test_dataset = CustomDataset(get(X_test_ref), get(y_test_ref))
 
-num_workers = min(8, multiprocessing.cpu_count())  # Detectar automaticamente o número de núcleos disponíveis, limitado a 8
+num_workers = max(1, min(8, multiprocessing.cpu_count() // 2))  # Ajustado para melhorar compatibilidade com diferentes sistemas
 
-train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=1024, shuffle=True, num_workers=num_workers)
-test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=1024, shuffle=False, num_workers=num_workers)
+train_dataloader = torch.utils.data.DataLoader(train_dataset, batch_size=512, shuffle=True, num_workers=num_workers)
+test_dataloader = torch.utils.data.DataLoader(test_dataset, batch_size=512, shuffle=False, num_workers=num_workers)
 
 # Definir o modelo
 class LightningModel(L.LightningModule):
@@ -208,7 +208,7 @@ def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref,
                 train_dataloader=get(train_dataloader_ref),
                 val_dataloader=get(val_dataloader_ref)
             ),
-            resources={"cpu": 8, "gpu": 1}  # Ajuste com base no hardware disponível
+            resources={"cpu": 8, "gpu": 1}  # Ajustado para evitar alocações excessivas de recursos
         ),
         tune_config=tune.TuneConfig(
             metric="loss",
