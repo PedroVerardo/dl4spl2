@@ -208,7 +208,7 @@ def tune_hyperparameters(num_features, train_dataloader_ref, val_dataloader_ref,
                 train_dataloader=get(train_dataloader_ref),
                 val_dataloader=get(val_dataloader_ref)
             ),
-            resources={"cpu": 16, "gpu": 1}  # Ajuste com base no hardware disponível
+            resources={"cpu": 8, "gpu": 1}  # Ajuste com base no hardware disponível
         ),
         tune_config=tune.TuneConfig(
             metric="loss",
