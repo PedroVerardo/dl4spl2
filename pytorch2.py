@@ -6,11 +6,11 @@ import torch
 from torch import nn
 import lightning.pytorch as L
 from lightning.pytorch import Trainer
-from lightning.pytorch.callbacks import ModelCheckpoint
+#from lightning.pytorch.callbacks import ModelCheckpoint
 
 from ray import train, tune, put, get, init
 from ray.tune.search.optuna import OptunaSearch
-from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
+#from ray.tune.integration.pytorch_lightning import TuneReportCheckpointCallback
 from ray.tune.schedulers import ASHAScheduler
 from functools import partial
 
@@ -154,17 +154,17 @@ def train_model_tune(config, num_features, train_dataloader, val_dataloader, max
     )
 
     metrics = {"loss": "val_loss"}
-    checkpoint_callback = ModelCheckpoint(
-        dirpath="checkpoints",
-        filename="epoch-{epoch:02d}-val_loss-{val_loss:.2f}",
-        save_top_k=5,  # Manter apenas os 5 melhores checkpoints para economizar espaço
-        verbose=True,
-        every_n_epochs=1,
-        monitor="val_loss",  # Adiciona a métrica para rastreamento
-        mode="min"
-    )
-
-    callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end"), checkpoint_callback]
+    #checkpoint_callback = ModelCheckpoint(
+    #    dirpath="checkpoints",
+    #    filename="epoch-{epoch:02d}-val_loss-{val_loss:.2f}",
+    #    save_top_k=5,  # Manter apenas os 5 melhores checkpoints para economizar espaço
+    #    verbose=True,
+    #    every_n_epochs=1,
+    #    monitor="val_loss",  # Adiciona a métrica para rastreamento
+    #    mode="min"
+    #)
+    
+    #callbacks = [TuneReportCheckpointCallback(metrics, on="validation_end"), checkpoint_callback]
 
     # Detectar ambiente de execução
     is_headless = not sys.stdout.isatty()
@@ -173,7 +173,7 @@ def train_model_tune(config, num_features, train_dataloader, val_dataloader, max
         max_epochs=max_epochs,
         accelerator='auto',
         devices='auto',  # Seleciona automaticamente os recursos disponíveis
-        callbacks=callbacks,
+        #callbacks=callbacks,
         enable_progress_bar=not is_headless  # Desativar barra de progresso em ambientes headless
     )
     
